@@ -1,7 +1,9 @@
 import json
 import sys
 import webbrowser
+from html import escape
 from pathlib import Path
+from urllib import error, request
 from urllib.parse import urljoin, urlparse
 
 from PyQt6.QtCore import Qt
@@ -39,8 +41,8 @@ class MainWindow(QMainWindow):
         self.filtered_site_indices: list[int] = []
         self.current_site_index = -1
         self.is_loading_site = False
-        self.path_rows: list[tuple[QWidget, QLineEdit]] = []
-        self.common_path_rows: list[tuple[QWidget, QLineEdit]] = []
+        self.path_rows: list[tuple[QWidget, QLineEdit, QLabel]] = []
+        self.common_path_rows: list[tuple[QWidget, QLineEdit, QLabel, QPushButton, QLabel]] = []
 
         self.setup_ui()
         self.load_state()
@@ -191,6 +193,10 @@ class MainWindow(QMainWindow):
         import_paths_button.clicked.connect(self.import_paths_from_site)
         open_buttons_layout.addWidget(import_paths_button)
 
+        check_paths_button = QPushButton("Проверить path")
+        check_paths_button.clicked.connect(self.check_site_paths)
+        open_buttons_layout.addWidget(check_paths_button)
+
         site_tab_layout.addLayout(open_buttons_layout)
 
         common_paths_tab = QWidget()
@@ -223,6 +229,10 @@ class MainWindow(QMainWindow):
         open_common_paths_button = QPushButton("Открыть общий path")
         open_common_paths_button.clicked.connect(self.open_category_path)
         common_paths_layout.addWidget(open_common_paths_button)
+
+        check_common_paths_button = QPushButton("Проверить общий path")
+        check_common_paths_button.clicked.connect(self.check_common_paths_by_category)
+        common_paths_layout.addWidget(check_common_paths_button)
 
         tabs.addTab(site_tab, "Сайт")
         tabs.addTab(common_paths_tab, "Общий path")
@@ -393,14 +403,19 @@ class MainWindow(QMainWindow):
         field.setPlaceholderText("/page или section/item")
         field.setText(value)
         field.textChanged.connect(self.save_current_site)
+
+        status_label = QLabel("Не проверено")
+        status_label.setMinimumWidth(120)
+        field.textChanged.connect(lambda _text, label=status_label: self.reset_status_label(label))
         row_layout.addWidget(field)
+        row_layout.addWidget(status_label)
 
         remove_button = QPushButton("x")
         remove_button.setFixedWidth(32)
         remove_button.clicked.connect(lambda _checked=False, widget=row_widget: self.remove_path_input(widget))
         row_layout.addWidget(remove_button)
 
-        self.path_rows.append((row_widget, field))
+        self.path_rows.append((row_widget, field, status_label))
         self.paths_layout.addWidget(row_widget)
 
         if save_after:
@@ -412,7 +427,7 @@ class MainWindow(QMainWindow):
             self.save_current_site()
             return
 
-        for index, (widget, _field) in enumerate(self.path_rows):
+        for index, (widget, _field, _status_label) in enumerate(self.path_rows):
             if widget is row_widget:
                 self.path_rows.pop(index)
                 self.paths_layout.removeWidget(widget)
@@ -423,13 +438,17 @@ class MainWindow(QMainWindow):
 
     def clear_path_inputs(self) -> None:
         while self.path_rows:
-            row_widget, _field = self.path_rows.pop()
+            row_widget, _field, _status_label = self.path_rows.pop()
             self.paths_layout.removeWidget(row_widget)
             row_widget.deleteLater()
 
     def add_common_path_input(self, value: str = "", save_after: bool = True) -> None:
         row_widget = QWidget()
-        row_layout = QHBoxLayout(row_widget)
+        container_layout = QVBoxLayout(row_widget)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(4)
+
+        row_layout = QHBoxLayout()
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(8)
 
@@ -437,14 +456,35 @@ class MainWindow(QMainWindow):
         field.setPlaceholderText("/page или section/item")
         field.setText(value)
         field.textChanged.connect(self.save_state)
+
+        status_label = QLabel("Не проверено")
+        status_label.setMinimumWidth(120)
+        field.textChanged.connect(lambda _text, label=status_label: self.reset_status_label(label))
         row_layout.addWidget(field)
+        row_layout.addWidget(status_label)
+
+        details_button = QPushButton("Детали")
+        details_button.setVisible(False)
+        details_button.setCheckable(True)
+        row_layout.addWidget(details_button)
 
         remove_button = QPushButton("x")
         remove_button.setFixedWidth(32)
         remove_button.clicked.connect(lambda _checked=False, widget=row_widget: self.remove_common_path_input(widget))
         row_layout.addWidget(remove_button)
 
-        self.common_path_rows.append((row_widget, field))
+        details_label = QLabel("")
+        details_label.setWordWrap(True)
+        details_label.setVisible(False)
+        details_label.setStyleSheet("color: #505050; padding-left: 4px;")
+        details_label.setTextFormat(Qt.TextFormat.RichText)
+        details_button.toggled.connect(details_label.setVisible)
+        field.textChanged.connect(lambda _text, button=details_button, label=details_label: self.reset_common_path_details(button, label))
+
+        container_layout.addLayout(row_layout)
+        container_layout.addWidget(details_label)
+
+        self.common_path_rows.append((row_widget, field, status_label, details_button, details_label))
         self.common_paths_layout.addWidget(row_widget)
 
         if save_after:
@@ -456,7 +496,7 @@ class MainWindow(QMainWindow):
             self.save_state()
             return
 
-        for index, (widget, _field) in enumerate(self.common_path_rows):
+        for index, (widget, _field, _status_label, _details_button, _details_label) in enumerate(self.common_path_rows):
             if widget is row_widget:
                 self.common_path_rows.pop(index)
                 self.common_paths_layout.removeWidget(widget)
@@ -467,7 +507,7 @@ class MainWindow(QMainWindow):
 
     def clear_common_path_inputs(self) -> None:
         while self.common_path_rows:
-            row_widget, _field = self.common_path_rows.pop()
+            row_widget, _field, _status_label, _details_button, _details_label = self.common_path_rows.pop()
             self.common_paths_layout.removeWidget(row_widget)
             row_widget.deleteLater()
 
@@ -480,7 +520,11 @@ class MainWindow(QMainWindow):
             self.add_common_path_input(save_after=False)
 
     def collect_common_paths(self) -> list[str]:
-        return [field.text().strip() for _widget, field in self.common_path_rows if field.text().strip()]
+        return [
+            field.text().strip()
+            for _widget, field, _status_label, _details_button, _details_label in self.common_path_rows
+            if field.text().strip()
+        ]
 
     def collect_site_from_form(self) -> dict:
         return {
@@ -488,7 +532,7 @@ class MainWindow(QMainWindow):
             "category": self.category_input.text().strip(),
             "base_url": self.base_url_input.text().strip(),
             "manager_url": self.manager_url_input.text().strip(),
-            "paths": [field.text().strip() for _widget, field in self.path_rows if field.text().strip()],
+            "paths": [field.text().strip() for _widget, field, _status_label in self.path_rows if field.text().strip()],
         }
 
     def save_current_site(self) -> None:
@@ -717,6 +761,133 @@ class MainWindow(QMainWindow):
     def open_in_browser(self, url: str) -> None:
         webbrowser.get().open_new_tab(url)
 
+    def set_status_label(self, label: QLabel, text: str, color: str) -> None:
+        label.setText(text)
+        label.setStyleSheet(f"color: {color};")
+
+    def reset_status_label(self, label: QLabel) -> None:
+        self.set_status_label(label, "Не проверено", "#808080")
+
+    def reset_common_path_details(self, button: QPushButton, label: QLabel) -> None:
+        button.setChecked(False)
+        button.setVisible(False)
+        label.clear()
+        label.setVisible(False)
+
+    def get_status_color(self, status_text: str) -> str:
+        if status_text.startswith(("200", "201", "202", "203", "204")):
+            return "#228b22"
+        if status_text.startswith(("301", "302", "303", "307", "308")):
+            return "#b8860b"
+        return "#b22222"
+
+    def check_url_status(self, url: str) -> tuple[str, str]:
+        request_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MODX-URL-Helper/1.0"
+        }
+        http_request = request.Request(url, headers=request_headers, method="GET")
+
+        try:
+            with request.urlopen(http_request, timeout=8) as response:
+                status = getattr(response, "status", 200)
+                final_url = response.geturl()
+                if final_url != url:
+                    return f"{status} -> redirect", "#b8860b"
+                if 200 <= status < 300:
+                    return str(status), "#228b22"
+                return str(status), "#b8860b"
+        except error.HTTPError as http_error:
+            status = http_error.code
+            color = "#b8860b" if 300 <= status < 400 else "#b22222"
+            return str(status), color
+        except Exception:
+            return "Нет ответа", "#b22222"
+
+    def check_site_paths(self) -> None:
+        base_url = self.normalize_url(self.base_url_input.text())
+        if not base_url:
+            QMessageBox.warning(self, "Ошибка", "Введите основную ссылку.")
+            return
+
+        checked_any = False
+        for _widget, field, status_label in self.path_rows:
+            path = field.text().strip()
+            if not path:
+                self.set_status_label(status_label, "Пусто", "#808080")
+                continue
+
+            checked_any = True
+            self.set_status_label(status_label, "Проверка...", "#1f5aa6")
+            QApplication.processEvents()
+            status_text, color = self.check_url_status(self.build_url(base_url, path))
+            self.set_status_label(status_label, status_text, color)
+
+        if not checked_any:
+            QMessageBox.information(self, "Проверка path", "Нет заполненных path для проверки.")
+
+    def check_common_paths_by_category(self) -> None:
+        categories = self.get_available_categories()
+        if not categories:
+            QMessageBox.warning(self, "Ошибка", "Нет категорий для выбора.")
+            return
+
+        category, accepted = QInputDialog.getItem(
+            self,
+            "Выберите категорию",
+            "Категория:",
+            categories,
+            0,
+            False,
+        )
+        if not accepted or not category:
+            return
+
+        paths = self.collect_common_paths()
+        if not paths:
+            QMessageBox.warning(self, "Ошибка", "Добавьте хотя бы один общий path.")
+            return
+
+        matching_sites = [
+            site for site in self.sites
+            if site.get("category", "").strip() == category and self.normalize_url(site.get("base_url", ""))
+        ]
+        if not matching_sites:
+            QMessageBox.warning(self, "Ошибка", "В этой категории нет сайтов с основной ссылкой.")
+            return
+
+        checked_any = False
+        for _widget, field, status_label, details_button, details_label in self.common_path_rows:
+            path = field.text().strip()
+            if not path:
+                self.set_status_label(status_label, "Пусто", "#808080")
+                self.reset_common_path_details(details_button, details_label)
+                continue
+
+            checked_any = True
+            site_status_lines: list[str] = []
+            success_count = 0
+            for site in matching_sites:
+                site_name = site.get("name", "").strip() or "Без названия"
+                status_text, _color = self.check_url_status(self.build_url(site.get("base_url", ""), path))
+                line_color = self.get_status_color(status_text)
+                site_status_lines.append(
+                    f"<div><span style='color:{line_color}; font-weight:600;'>{escape(site_name)}</span>"
+                    f"<span style='color:{line_color};'>: {escape(status_text)}</span></div>"
+                )
+                if status_text.startswith(("200", "201", "202", "203", "204", "301", "302", "303", "307", "308")):
+                    success_count += 1
+
+            color = "#228b22" if success_count == len(matching_sites) else "#b8860b" if success_count else "#b22222"
+            status_text = f"{success_count}/{len(matching_sites)} OK"
+            self.set_status_label(status_label, status_text, color)
+            details_label.setText("".join(site_status_lines))
+            details_button.setChecked(False)
+            details_button.setVisible(True)
+            details_label.setVisible(False)
+
+        if not checked_any:
+            QMessageBox.information(self, "Проверка общего path", "Нет заполненных общих path для проверки.")
+
     def open_url(self, url: str, error_message: str) -> None:
         target = self.normalize_url(url)
         if not target:
@@ -741,7 +912,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", "Введите основную ссылку.")
             return
 
-        paths = [field.text().strip() for _widget, field in self.path_rows if field.text().strip()]
+        paths = [field.text().strip() for _widget, field, _status_label in self.path_rows if field.text().strip()]
         if not paths:
             self.open_in_browser(base_url)
             return
