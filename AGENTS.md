@@ -46,6 +46,8 @@ The project was refactored away from a monolithic `main.py`.
   `Site` and `AppState` are the source of truth.
 - Keep JSON compatibility with the current persisted structure:
   `sites` list and `common_paths` list.
+- `Site` now also includes `favorite: bool`.
+  Missing `favorite` in older JSON must continue to behave as `false`.
 - Preserve the invalid-state safety behavior:
   if `sites.json` is broken, the app must not silently overwrite it.
   The old file is backed up on the next successful save.
@@ -65,7 +67,8 @@ Persisted JSON shape:
       "category": "MODX Revo",
       "base_url": "https://example.com/",
       "manager_url": "https://example.com/manager/",
-      "paths": ["catalog", "contacts"]
+      "paths": ["catalog", "contacts"],
+      "favorite": true
     }
   ],
   "common_paths": ["robots.txt", "sitemap.xml"]
@@ -85,7 +88,9 @@ Legacy import compatibility exists for older payloads with `main_url` and `paths
   JSON normalization,
   backup behavior,
   URL classification,
-  URL building.
+  URL building,
+  clone-name generation,
+  favorite persistence.
 
 ## Common Commands
 
@@ -131,6 +136,17 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 - `webbrowser` opening is wrapped in `UrlService.open_in_browser()`.
   Keep browser fallback behavior there.
 - Closing the window during active checks is intentionally blocked in `window.py`.
+- `window.py` now contains user-facing workflows for:
+  site cloning,
+  bulk add for per-site `path`,
+  bulk add for `common_paths`,
+  favorites,
+  sorting modes.
+- Default UI state on startup:
+  sort mode is `По порядку добавления`,
+  category filter is `Все категории`.
+- Editing only per-site `Path` must not rebuild the site list on each keystroke.
+  This preserves focus in the active input field.
 
 ## When Starting A New Task
 
@@ -149,3 +165,11 @@ Recent major change:
 - The app was modularized from a single large `main.py` into a package.
 - Basic automated tests were added.
 - Background URL checks and state safety behavior were preserved during the refactor.
+
+Recent feature change:
+
+- Added site cloning.
+- Added favorites with persistence in `sites.json`.
+- Added bulk-add workflows for site paths and common paths.
+- Added sort modes including insertion order.
+- Fixed focus loss while editing per-site `Path`.
