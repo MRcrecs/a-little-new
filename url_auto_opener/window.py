@@ -512,7 +512,7 @@ class MainWindow(QMainWindow):
 
     def collect_site_from_form(self) -> Site:
         return Site(
-            name=self.site_name_input.text().strip() or self.generate_site_name(),
+            name=self.site_name_input.text().strip(),
             category=self.category_input.text().strip(),
             base_url=self.base_url_input.text().strip(),
             manager_url=self.manager_url_input.text().strip(),
