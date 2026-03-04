@@ -43,6 +43,21 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 - основной `.exe` будет в `dist\url-auto-opener.exe`
 - готовая релизная папка будет в `release\url-auto-opener\`
 
+## Тесты
+
+```powershell
+python -m unittest discover -s tests
+```
+
+## Структура проекта
+
+- `main.py` - минимальная точка входа
+- `url_auto_opener/window.py` - UI и пользовательские сценарии
+- `url_auto_opener/state.py` - загрузка, нормализация, сохранение и backup `sites.json`
+- `url_auto_opener/url_service.py` - URL и HTTP-логика
+- `url_auto_opener/workers.py` - фоновые проверки `path`
+- `url_auto_opener/models.py` - доменные модели и типы запросов
+
 ## Перенос на другой ПК
 
 Через git:
