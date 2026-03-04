@@ -19,15 +19,32 @@ class StateRepository:
         return Path(__file__).resolve().parent.parent / "sites.json"
 
     def generate_site_name(self, sites: Sequence[Site]) -> str:
-        base_name = "Новый сайт"
+        return self.generate_unique_name("Новый сайт", sites)
+
+    @staticmethod
+    def _normalize_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return False
+
+    def generate_unique_name(self, base_name: str, sites: Sequence[Site]) -> str:
+        normalized_base_name = base_name.strip() or "Сайт"
         existing_names = {site.name.strip() for site in sites}
-        if base_name not in existing_names:
-            return base_name
+        if normalized_base_name not in existing_names:
+            return normalized_base_name
 
         index = 2
-        while f"{base_name} {index}" in existing_names:
+        while f"{normalized_base_name} {index}" in existing_names:
             index += 1
-        return f"{base_name} {index}"
+        return f"{normalized_base_name} {index}"
+
+    def generate_clone_name(self, source_site: Site, sites: Sequence[Site]) -> str:
+        source_name = source_site.name.strip() or "Сайт"
+        return self.generate_unique_name(f"Копия {source_name}", sites)
 
     def create_empty_site(self, sites: Sequence[Site]) -> Site:
         return Site(name=self.generate_site_name(sites))
@@ -50,6 +67,7 @@ class StateRepository:
             base_url=str(raw_site.get("base_url", "")).strip(),
             manager_url=str(raw_site.get("manager_url", "")).strip(),
             paths=[str(path).strip() for path in paths if str(path).strip()],
+            favorite=self._normalize_bool(raw_site.get("favorite", False)),
         )
 
     def normalize_data(self, data: dict) -> AppState:
@@ -96,6 +114,7 @@ class StateRepository:
             "base_url": site.base_url,
             "manager_url": site.manager_url,
             "paths": list(site.paths),
+            "favorite": site.favorite,
         }
 
     def serialize_state(self, state: AppState) -> dict:

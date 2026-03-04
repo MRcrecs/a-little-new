@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from url_auto_opener.models import Site
 from url_auto_opener.state import StateRepository
 
 
@@ -20,6 +21,38 @@ class StateRepositoryTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             repository.normalize_data({"sites": [], "common_paths": "robots.txt"})
+
+    def test_favorite_is_loaded_and_saved(self) -> None:
+        repository = StateRepository(Path("sites.json"))
+
+        state = repository.normalize_data(
+            {
+                "sites": [
+                    {
+                        "name": "Example",
+                        "category": "MODX",
+                        "base_url": "https://example.com",
+                        "manager_url": "",
+                        "paths": ["robots.txt"],
+                        "favorite": True,
+                    }
+                ],
+                "common_paths": [],
+            }
+        )
+
+        self.assertTrue(state.sites[0].favorite)
+
+        serialized = repository.serialize_state(state)
+        self.assertTrue(serialized["sites"][0]["favorite"])
+
+    def test_generate_clone_name_is_unique(self) -> None:
+        repository = StateRepository(Path("sites.json"))
+        sites = [Site(name="Site A"), Site(name="Копия Site A")]
+
+        clone_name = repository.generate_clone_name(sites[0], sites)
+
+        self.assertEqual(clone_name, "Копия Site A 2")
 
     def test_invalid_state_file_is_backed_up_on_next_save(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

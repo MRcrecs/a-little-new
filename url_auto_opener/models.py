@@ -12,6 +12,7 @@ class Site:
     base_url: str = ""
     manager_url: str = ""
     paths: list[str] = field(default_factory=list)
+    favorite: bool = False
 
 
 @dataclass(slots=True)

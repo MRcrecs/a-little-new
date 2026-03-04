@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from PyQt6.QtCore import QThread, Qt
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -105,7 +106,17 @@ class MainWindow(QMainWindow):
         self.site_search_input.textChanged.connect(self.refresh_site_list)
         left_layout.addWidget(self.site_search_input)
 
+        self.sort_mode_filter = QComboBox()
+        self.sort_mode_filter.addItem("По порядку добавления", "added")
+        self.sort_mode_filter.addItem("Избранные сверху", "favorite")
+        self.sort_mode_filter.addItem("По имени", "name")
+        self.sort_mode_filter.setCurrentIndex(0)
+        self.sort_mode_filter.currentIndexChanged.connect(self.refresh_site_list)
+        left_layout.addWidget(self.sort_mode_filter)
+
         self.category_filter = QComboBox()
+        self.category_filter.addItem("Все категории", "")
+        self.category_filter.setCurrentIndex(0)
         self.category_filter.currentIndexChanged.connect(self.refresh_site_list)
         left_layout.addWidget(self.category_filter)
 
@@ -118,6 +129,10 @@ class MainWindow(QMainWindow):
         add_site_button = QPushButton("Добавить сайт")
         add_site_button.clicked.connect(self.add_site)
         site_buttons_layout.addWidget(add_site_button)
+
+        clone_site_button = QPushButton("Клонировать сайт")
+        clone_site_button.clicked.connect(self.clone_site)
+        site_buttons_layout.addWidget(clone_site_button)
 
         delete_site_button = QPushButton("Удалить сайт")
         delete_site_button.clicked.connect(self.delete_site)
@@ -163,6 +178,10 @@ class MainWindow(QMainWindow):
         self.manager_url_input.textChanged.connect(self.save_current_site)
         form_layout.addRow("Manager URL", self.manager_url_input)
 
+        self.favorite_checkbox = QCheckBox("Избранный")
+        self.favorite_checkbox.stateChanged.connect(self.save_current_site)
+        form_layout.addRow("Статус", self.favorite_checkbox)
+
         site_tab_layout.addLayout(form_layout)
 
         paths_header = QHBoxLayout()
@@ -173,6 +192,10 @@ class MainWindow(QMainWindow):
         self.add_path_button.setFixedWidth(40)
         self.add_path_button.clicked.connect(lambda: self.add_path_input())
         paths_header.addWidget(self.add_path_button)
+
+        self.bulk_add_paths_button = QPushButton("Массово")
+        self.bulk_add_paths_button.clicked.connect(self.bulk_add_paths)
+        paths_header.addWidget(self.bulk_add_paths_button)
         site_tab_layout.addLayout(paths_header)
 
         self.paths_container = QWidget()
@@ -224,6 +247,10 @@ class MainWindow(QMainWindow):
         self.add_common_path_button.setFixedWidth(40)
         self.add_common_path_button.clicked.connect(lambda: self.add_common_path_input())
         common_header.addWidget(self.add_common_path_button)
+
+        self.bulk_add_common_paths_button = QPushButton("Массово")
+        self.bulk_add_common_paths_button.clicked.connect(self.bulk_add_common_paths)
+        common_header.addWidget(self.bulk_add_common_paths_button)
         common_paths_layout.addLayout(common_header)
 
         self.common_paths_container = QWidget()
@@ -260,6 +287,24 @@ class MainWindow(QMainWindow):
 
     def add_site(self) -> None:
         self.sites.append(self.create_empty_site())
+        self.refresh_site_list(preferred_site_index=len(self.sites) - 1)
+        self.save_state()
+
+    def clone_site(self) -> None:
+        if self.current_site_index < 0 or self.current_site_index >= len(self.sites):
+            QMessageBox.warning(self, "Ошибка", "Выберите сайт для клонирования.")
+            return
+
+        source_site = self.sites[self.current_site_index]
+        cloned_site = Site(
+            name=self.state_repository.generate_clone_name(source_site, self.sites),
+            category=source_site.category,
+            base_url=source_site.base_url,
+            manager_url=source_site.manager_url,
+            paths=list(source_site.paths),
+            favorite=False,
+        )
+        self.sites.append(cloned_site)
         self.refresh_site_list(preferred_site_index=len(self.sites) - 1)
         self.save_state()
 
@@ -307,6 +352,7 @@ class MainWindow(QMainWindow):
     def refresh_site_list(self, *_args, preferred_site_index: int | None = None) -> None:
         search_query = self.site_search_input.text().strip().lower()
         selected_category = self.category_filter.currentData() or ""
+        sort_mode = self.sort_mode_filter.currentData() or "favorite"
         previous_site_index = self.current_site_index if preferred_site_index is None else preferred_site_index
 
         self.refresh_category_filter()
@@ -316,8 +362,22 @@ class MainWindow(QMainWindow):
         self.site_list.blockSignals(True)
         self.site_list.clear()
 
-        for index, site in enumerate(self.sites, start=1):
-            zero_based_index = index - 1
+        indexed_sites = list(enumerate(self.sites))
+        if sort_mode == "name":
+            indexed_sites.sort(key=lambda item: ((item[1].name.strip() or f"Сайт {item[0] + 1}").lower(), item[0]))
+        elif sort_mode == "added":
+            pass
+        else:
+            indexed_sites.sort(
+                key=lambda item: (
+                    not item[1].favorite,
+                    (item[1].name.strip() or f"Сайт {item[0] + 1}").lower(),
+                    item[0],
+                )
+            )
+
+        for zero_based_index, site in indexed_sites:
+            index = zero_based_index + 1
             name = site.name.strip() or f"Сайт {index}"
             category = site.category.strip()
             if selected_category and category != selected_category:
@@ -328,7 +388,10 @@ class MainWindow(QMainWindow):
                 continue
 
             self.filtered_site_indices.append(zero_based_index)
-            self.site_list.addItem(f"[{category}] {name}" if category else name)
+            display_name = f"[{category}] {name}" if category else name
+            if site.favorite:
+                display_name = f"★ {display_name}"
+            self.site_list.addItem(display_name)
 
         self.site_list.blockSignals(False)
 
@@ -358,6 +421,7 @@ class MainWindow(QMainWindow):
             self.category_input.setText("")
             self.base_url_input.setText("")
             self.manager_url_input.setText("")
+            self.favorite_checkbox.setChecked(False)
             self.add_path_input(save_after=False)
             self.is_loading_site = False
             return
@@ -366,6 +430,7 @@ class MainWindow(QMainWindow):
         self.category_input.setText(site.category)
         self.base_url_input.setText(site.base_url)
         self.manager_url_input.setText(site.manager_url)
+        self.favorite_checkbox.setChecked(site.favorite)
 
         if site.paths:
             for path in site.paths:
@@ -423,6 +488,43 @@ class MainWindow(QMainWindow):
             row_widget, _field, _status_label = self.path_rows.pop()
             self.paths_layout.removeWidget(row_widget)
             row_widget.deleteLater()
+
+    def bulk_add_paths(self) -> None:
+        if self.current_site_index < 0 or self.current_site_index >= len(self.sites):
+            QMessageBox.warning(self, "Ошибка", "Выберите сайт.")
+            return
+
+        raw_paths, accepted = QInputDialog.getMultiLineText(
+            self,
+            "Массовое добавление path",
+            "Вставьте path по одному на строку:",
+        )
+        if not accepted:
+            return
+
+        new_paths = [line.strip() for line in raw_paths.splitlines() if line.strip()]
+        if not new_paths:
+            QMessageBox.information(self, "Массовое добавление path", "Нет path для добавления.")
+            return
+
+        existing_paths = [field.text().strip() for _widget, field, _status_label in self.path_rows if field.text().strip()]
+        merged_paths: list[str] = []
+        for path in [*existing_paths, *new_paths]:
+            if path not in merged_paths:
+                merged_paths.append(path)
+
+        self.clear_path_inputs()
+        for path in merged_paths:
+            self.add_path_input(path, save_after=False)
+        if not merged_paths:
+            self.add_path_input(save_after=False)
+
+        self.save_current_site()
+        QMessageBox.information(
+            self,
+            "Массовое добавление path",
+            f"Добавлено path: {len(merged_paths) - len(existing_paths)}",
+        )
 
     def add_common_path_input(self, value: str = "", save_after: bool = True) -> None:
         row_widget = QWidget()
@@ -510,6 +612,39 @@ class MainWindow(QMainWindow):
             if field.text().strip()
         ]
 
+    def bulk_add_common_paths(self) -> None:
+        raw_paths, accepted = QInputDialog.getMultiLineText(
+            self,
+            "Массовое добавление общего path",
+            "Вставьте path по одному на строку:",
+        )
+        if not accepted:
+            return
+
+        new_paths = [line.strip() for line in raw_paths.splitlines() if line.strip()]
+        if not new_paths:
+            QMessageBox.information(self, "Массовое добавление общего path", "Нет path для добавления.")
+            return
+
+        existing_paths = self.collect_common_paths()
+        merged_paths: list[str] = []
+        for path in [*existing_paths, *new_paths]:
+            if path not in merged_paths:
+                merged_paths.append(path)
+
+        self.clear_common_path_inputs()
+        for path in merged_paths:
+            self.add_common_path_input(path, save_after=False)
+        if not merged_paths:
+            self.add_common_path_input(save_after=False)
+
+        self.save_state()
+        QMessageBox.information(
+            self,
+            "Массовое добавление общего path",
+            f"Добавлено path: {len(merged_paths) - len(existing_paths)}",
+        )
+
     def collect_site_from_form(self) -> Site:
         return Site(
             name=self.site_name_input.text().strip(),
@@ -517,11 +652,22 @@ class MainWindow(QMainWindow):
             base_url=self.base_url_input.text().strip(),
             manager_url=self.manager_url_input.text().strip(),
             paths=[field.text().strip() for _widget, field, _status_label in self.path_rows if field.text().strip()],
+            favorite=self.favorite_checkbox.isChecked(),
         )
 
     def collect_state_from_form(self) -> AppState:
         self.state.common_paths = self.collect_common_paths()
         return self.state
+
+    @staticmethod
+    def should_refresh_site_list(previous_site: Site, updated_site: Site) -> bool:
+        return (
+            previous_site.name != updated_site.name
+            or previous_site.category != updated_site.category
+            or previous_site.base_url != updated_site.base_url
+            or previous_site.manager_url != updated_site.manager_url
+            or previous_site.favorite != updated_site.favorite
+        )
 
     def save_current_site(self) -> None:
         if self.is_loading_site:
@@ -530,8 +676,11 @@ class MainWindow(QMainWindow):
         if self.current_site_index < 0 or self.current_site_index >= len(self.sites):
             return
 
-        self.sites[self.current_site_index] = self.collect_site_from_form()
-        self.refresh_site_list(preferred_site_index=self.current_site_index)
+        previous_site = self.sites[self.current_site_index]
+        updated_site = self.collect_site_from_form()
+        self.sites[self.current_site_index] = updated_site
+        if self.should_refresh_site_list(previous_site, updated_site):
+            self.refresh_site_list(preferred_site_index=self.current_site_index)
         self.save_state()
 
     def apply_state(self, state: AppState, persist: bool = False) -> None:
